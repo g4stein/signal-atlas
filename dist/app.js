@@ -1,7 +1,7 @@
 import { MARKETS, M15, MINUTE, versions, demoBars, parseCSV, mergeImports, fetchCoinbase, research, latestSetups, issue, advance, stats, backtest, compare, clearsGate } from './engine.js'
 import { CandlestickChart, indicators, defaultIndicators } from './chart.js'
 import { closedBefore, createResearchCache } from './research-cache.js'
-import { csvCell } from './csv.js'
+import { journalCSV, parseJournalCSV, mergeJournal } from './journal.js'
 import { COINBASE, DEMO, PROMOTION, STORAGE } from './config.js'
 
 const icons = {
@@ -72,14 +72,26 @@ function readState() {
     return {}
   }
 }
-function persist() {
+function persist(next) {
   try {
-    localStorage.setItem(STORAGE.localKey, JSON.stringify(state))
+    localStorage.setItem(STORAGE.localKey, JSON.stringify(next))
+    state = next
     return true
   } catch {
-    toast('Browser storage is unavailable or full. Export your journal to keep a copy.')
+    toast('Browser storage is unavailable or full. Changes were not saved.')
     return false
   }
+}
+
+function withStorageLock(action) {
+  return navigator.locks ? navigator.locks.request(STORAGE.localKey, action) : action()
+}
+
+function saveSettings(update) {
+  return withStorageLock(() => {
+    const saved = readState()
+    return persist({ ...saved, ...update(saved) })
+  })
 }
 function toast(message) {
   clearTimeout(toastTimer)
@@ -162,14 +174,14 @@ function activeVersion(m, source = srcFor(m)) {
 }
 function journal() { return Object.values(state.journal ?? {}) }
 
-function persistScan() {
-  // Re-read journal records inside the browser lock shared by tabs on this origin.
+function persistScan(stepReplay) {
   const saved = readState()
-  state.journal = { ...state.journal, ...saved.journal }
-  state.promoted = { ...state.promoted, ...saved.promoted }
-  state.historical = { ...state.historical, ...saved.historical }
-  state.mode = mode
-  state.replay = Math.max(state.replay ?? DEMO.initialBars, saved.replay ?? DEMO.initialBars)
+  const replay = saved.replay ?? DEMO.initialBars
+  state = {
+    ...saved, mode,
+    journal: { ...saved.journal }, promoted: { ...saved.promoted }, historical: { ...saved.historical },
+    replay: stepReplay && mode === 'demo' ? Math.min(DEMO_END, replay + 1) : replay,
+  }
   const entries = state.journal
   let issued = 0
   for (const m of MARKETS) {
@@ -205,11 +217,9 @@ function persistScan() {
       }
     }
   }
-  persist()
-  return issued
-}
-async function recordScan() {
-  return navigator.locks ? navigator.locks.request(STORAGE.localKey, persistScan) : persistScan()
+  if (persist(state)) return issued
+  state = saved
+  return null
 }
 function quoteChange(m) {
   const bars = barsFor(m)
@@ -240,16 +250,15 @@ function currentSetup(m) {
   return saved ?? latestSetups(data, activeVersion(m, source))[0] ?? null
 }
 const chart = new CandlestickChart($('chart'), {
-  add(draw) {
+  async add(draw) {
     const key = chartKey()
-    state.drawings ??= {}
-    state.drawings[key] ??= []
-    state.drawings[key].push(draw)
-    persist(); renderChart()
+    await saveSettings(saved => ({ drawings: { ...saved.drawings, [key]: [...(saved.drawings?.[key] ?? []), draw] } }))
+    render()
   },
-  remove() {
-    state.drawings?.[chartKey()]?.pop()
-    persist(); renderChart()
+  async remove() {
+    const key = chartKey()
+    await saveSettings(saved => ({ drawings: { ...saved.drawings, [key]: saved.drawings?.[key]?.slice(0, -1) ?? [] } }))
+    render()
   },
   inspect(bar) {
     const m = market()
@@ -421,13 +430,7 @@ function openSignal(id, opener) {
   showDialog('signal-dialog', opener)
 }
 function exportJournal() {
-  const fields = ['symbol','source','version','strategy','direction','published','setupAt','issued','expires','entry','stop','target','filled','fill','finished','exitPrice','outcome','cost','net','netR']
-  const rows = filteredJournal().map(s => fields.map(k => {
-    const val = s[k]
-    if (['published','setupAt','issued','expires','filled','finished'].includes(k) && val != null) return new Date(val).toISOString()
-    return val ?? ''
-  }).map(csvCell).join(','))
-  const url = URL.createObjectURL(new Blob([[fields.join(','), ...rows].join('\r\n') + '\r\n'], { type: 'text/csv' }))
+  const url = URL.createObjectURL(new Blob([journalCSV(filteredJournal())], { type: 'text/csv' }))
   const a = Object.assign(document.createElement('a'), { href: url, download: 'signal-atlas-journal.csv' })
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
@@ -454,7 +457,7 @@ function setView(next) {
   $('crumb').textContent = views[next]
   render()
 }
-async function sceneScan({ silent = false, refresh = true } = {}) {
+async function sceneScan({ silent = false, refresh = true, stepReplay = false } = {}) {
   if (scanInProgress) return scanInProgress
   const load = mode === 'live' && refresh
   if (load) for (const id of ['scan-main','scan-page','run-lab']) $(id).disabled = true
@@ -468,9 +471,10 @@ async function sceneScan({ silent = false, refresh = true } = {}) {
           exchangeErrors[m.id] = error.message
         }
       }))
-      lastScanCount = await recordScan()
+      lastScanCount = await withStorageLock(() => persistScan(stepReplay))
+      if ((state.replay ?? DEMO.initialBars) >= DEMO_END && timer) stopReplay()
       render()
-      if (!silent) {
+      if (!silent && lastScanCount !== null) {
         const failures = load ? Object.keys(exchangeErrors).filter(id => srcFor(byMarket[id]) === 'live').length : 0
         toast(failures ? `Scan complete · ${failures} exchange ${failures === 1 ? 'feed' : 'feeds'} unavailable · ${lastScanCount} new`
           : `Scan complete · ${lastScanCount} new paper ${lastScanCount === 1 ? 'signal' : 'signals'}`)
@@ -496,15 +500,12 @@ function stopReplay() {
 }
 async function step() {
   if (mode !== 'demo' || scanInProgress) return
-  state.replay = Math.min(DEMO_END, (state.replay ?? DEMO.initialBars) + 1)
-  if (state.replay === DEMO_END) stopReplay()
-  await sceneScan({ silent: true, refresh: false })
+  await sceneScan({ silent: true, refresh: false, stepReplay: true })
 }
 function setMode(next) {
   if (timer) stopReplay()
   mode = next
-  state.mode = next
-  persist()
+  void saveSettings(() => ({ mode: next }))
   clearInterval(autoTimer)
   if (mode === 'live') {
     $('journal-source').value = srcFor(market())
@@ -544,12 +545,14 @@ document.addEventListener('click', event => {
   if (action.signal) openSignal(action.signal, btn)
   if (btn.id === 'restore-baseline') {
     const key = [srcFor(market()), symbol].join('|')
-    if (state.promoted?.[key]?.version === 'strict') {
-      state.promoted[key].hold = true
-      persist()
-      renderLab()
-      toast('Baseline restored for future signals.')
-    }
+    void withStorageLock(() => {
+      const saved = readState()
+      const promotion = saved.promoted?.[key]
+      if (promotion?.version === 'strict' && persist({ ...saved, promoted: { ...saved.promoted, [key]: { ...promotion, hold: true } } })) {
+        renderLab()
+        toast('Baseline restored for future signals.')
+      }
+    })
   }
 })
 $('mode').addEventListener('change', e => setMode(e.target.value))
@@ -573,9 +576,9 @@ $('indicator-open').addEventListener('click', () => {
   $('indicators').innerHTML = Object.entries(indicators).map(([id,[label]]) => `<label><input type="checkbox" value="${id}" ${(state.indicators ?? defaultIndicators).includes(id) ? 'checked' : ''}>${label}</label>`).join('')
   showDialog('indicator-dialog')
 })
-$('indicators').addEventListener('change', () => {
-  state.indicators = [...$('indicators').querySelectorAll('input:checked')].map(el => el.value)
-  persist()
+$('indicators').addEventListener('change', async () => {
+  const selected = [...$('indicators').querySelectorAll('input:checked')].map(el => el.value)
+  await saveSettings(() => ({ indicators: selected }))
   renderChart()
 })
 $('import-open').addEventListener('click', () => {
@@ -605,6 +608,93 @@ $('import-form').addEventListener('submit', async event => {
     $('import-error').textContent = error.message
   } finally { submit.disabled = false }
 })
+$('journal-import-open').addEventListener('click', () => {
+  $('journal-import-error').textContent = ''
+  $('journal-file').value = ''
+  showDialog('journal-import-dialog')
+})
+$('journal-import-form').addEventListener('submit', async event => {
+  event.preventDefault()
+  const submit = event.currentTarget.querySelector('[type=submit]')
+  const error = $('journal-import-error')
+  error.textContent = ''
+  submit.disabled = true
+  try {
+    const file = $('journal-file').files[0]
+    if (!file || file.size > 4000000) throw Error('Choose a journal CSV file under 4 MB.')
+    const entries = parseJournalCSV(await file.text())
+    const changed = await withStorageLock(() => {
+      const saved = readState()
+      const merged = mergeJournal(saved.journal, entries)
+      if (!persist({ ...saved, journal: merged.journal })) throw Error('Changes could not be saved. Check browser storage.')
+      return merged.changed
+    })
+    $('journal-import-dialog').close()
+    $('journal-source').value = entries[0].source
+    $('journal-market').value = 'all'
+    $('journal-outcome').value = 'all'
+    render()
+    toast(`${changed} journal ${changed === 1 ? 'entry' : 'entries'} imported.`)
+  } catch (reason) {
+    error.textContent = reason.message
+  } finally {
+    submit.disabled = false
+  }
+})
+
+const destructiveActions = {
+  reset: {
+    title: 'Reset demo replay?',
+    message: 'This resets the replay and deletes demo signals and demo strategy history. Imported candles, market signals, and drawings stay saved.',
+    button: 'Reset demo replay',
+  },
+  clear: {
+    title: 'Clear the signal journal?',
+    message: 'This permanently deletes journal entries from all data sources in this browser. Export any records you want to keep first.',
+    button: 'Clear journal',
+  },
+}
+let pendingAction
+for (const [id, action] of [['reset-demo', 'reset'], ['clear-journal', 'clear']]) {
+  $(id).addEventListener('click', () => {
+    pendingAction = action
+    const info = destructiveActions[action]
+    $('confirm-title').textContent = info.title
+    $('confirm-message').textContent = info.message
+    $('confirm-submit').textContent = info.button
+    showDialog('confirm-dialog')
+  })
+}
+$('confirm-form').addEventListener('submit', async event => {
+  event.preventDefault()
+  const action = pendingAction
+  $('confirm-submit').disabled = true
+  try {
+    const saved = await withStorageLock(() => {
+      const previous = readState()
+      if (action === 'clear') return persist({ ...previous, journal: {} })
+      const withoutDemo = records => Object.fromEntries(Object.entries(records ?? {}).filter(([id]) => !id.startsWith('demo|')))
+      return persist({
+        ...previous, replay: DEMO.initialBars, mode: 'demo',
+        journal: withoutDemo(previous.journal), promoted: withoutDemo(previous.promoted),
+        historical: withoutDemo(previous.historical),
+      })
+    })
+    if (!saved) return
+    if (action === 'reset') {
+      if (timer) stopReplay()
+      clearInterval(autoTimer)
+      mode = 'demo'
+      $('journal-source').value = 'demo'
+    }
+    $('confirm-dialog').close()
+    render()
+    toast(action === 'reset' ? 'Demo replay reset.' : 'Signal journal cleared.')
+  } finally {
+    $('confirm-submit').disabled = false
+  }
+})
+
 window.addEventListener('storage', event => {
   if (event.key !== STORAGE.localKey) return
   const saved = readState()

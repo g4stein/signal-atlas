@@ -77,9 +77,10 @@ export class CandlestickChart {
 
   onKey(event) {
     const g = this.geom
-    const moves = { ArrowLeft: [-g?.dx, 0], ArrowRight: [g?.dx, 0], ArrowUp: [0, -5], ArrowDown: [0, 5] }
-    const move = moves[event.key]
-    if (!g || (!move && event.key !== 'Enter' && event.key !== ' ')) return
+    if (!g) return
+    const moves = { ArrowLeft: [-g.dx, 0], ArrowRight: [g.dx, 0], ArrowUp: [0, -5], ArrowDown: [0, 5] }
+    const move = Object.hasOwn(moves, event.key) ? moves[event.key] : null
+    if (!move && event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     const current = this.hover ?? { x: (g.bars.length - .5) * g.dx, y: (g.top + g.bottom) / 2 }
     if (move) {

@@ -165,3 +165,7 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .candle-data caption{padding:8px 14px;text-align:left;color:var(--muted)}
 .candle-data tbody th{font:inherit;text-transform:none;letter-spacing:normal}
 @media(prefers-reduced-motion:reduce){button:hover{transition:none}}
+.journal-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.replay{flex-wrap:wrap}
+.btn.danger{color:var(--red);border-color:#684353}
+@media(max-width:550px){#journal .heading{flex-wrap:wrap}.journal-actions{justify-content:flex-start}}
