@@ -11,7 +11,8 @@ createServer(async (req, res) => {
     res.writeHead(405, { Allow: 'GET, HEAD' }).end()
     return
   }
-  const filename = (req.url === '/' ? '/index.html' : req.url).split('?')[0].slice(1)
+  const route = req.url.split('?')[0]
+  const filename = route === '/' ? 'index.html' : route.slice(1)
   const type = mime[extname(filename)]
   if (!files.has(filename) || !type) {
     res.writeHead(404).end('Not found')
