@@ -1,1 +1,9 @@
-{"name":"signal-atlas","private":true,"type":"module"}
+{
+  "name": "signal-atlas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "npm test"
+  }
+}

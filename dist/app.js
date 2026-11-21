@@ -1,5 +1,6 @@
-import { MARKETS, M15, MINUTE, versions, demoBars, parseCSV, mergeImports, fetchCoinbase, research, studies, latestSetups, issue, advance, stats, backtest, compare, clearsGate } from './engine.js'
+import { MARKETS, M15, MINUTE, versions, demoBars, parseCSV, mergeImports, fetchCoinbase, research, latestSetups, issue, advance, stats, backtest, compare, clearsGate } from './engine.js'
 import { CandlestickChart, indicators, defaultIndicators } from './chart.js'
+import { closedBefore, createResearchCache } from './research-cache.js'
 
 const icons = {
   chart: '<path d="M3 3v17h18M6 14l4-4 4 2 6-7"/>',
@@ -42,7 +43,8 @@ const dot = m => `<span class="dot" style="--asset:${m.color}"></span>`
 const directionPill = d => d > 0 ? '<span class="pill up">Long</span>' : '<span class="pill down">Short</span>'
 const changeClass = n => n > 0 ? 'up' : n < 0 ? 'down' : ''
 const level = (name, value, className = '') => `<div><dt>${name}</dt><dd class="${className}">${value}</dd></div>`
-const datasetCache = new Map()
+const cache = createResearchCache()
+const replayWindows = new Map()
 const imports = {}
 const exchange = {}
 const exchangeErrors = {}
@@ -125,18 +127,16 @@ async function saveImport(id, incoming) {
 }
 
 function barsFor(m, source = srcFor(m)) {
-  if (source === 'demo') return demo[m.id].slice(0, state.replay ?? DEMO_START)
+  if (source === 'demo') {
+    const length = state.replay ?? DEMO_START
+    if (replayWindows.get(m.id)?.length !== length) replayWindows.set(m.id, demo[m.id].slice(0, length))
+    return replayWindows.get(m.id)
+  }
   if (source === 'csv') return imports[m.id] ?? []
   return exchange[m.id] ?? []
 }
 function dataFor(m, source = srcFor(m)) {
-  const key = [source, m.id].join('|')
-  const bars = barsFor(m, source)
-  const cached = datasetCache.get(key)
-  if (cached && cached.bars.length === bars.length && cached.bars.at(-1) === bars.at(-1)) return cached
-  const data = research(bars)
-  datasetCache.set(key, data)
-  return data
+  return cache.dataset(source, m, barsFor(m, source))
 }
 function available(m, source = srcFor(m)) {
   const bar = barsFor(m, source).at(-1)
@@ -260,7 +260,7 @@ function chartLevels(bars) {
 function renderChart() {
   const m = market(), source = srcFor(m), data = dataFor(m, source)
   const all = frame === 60 ? data.hourly : frame === 240 ? data.h4 : data.bars
-  const s = frame === 60 ? data.hourlyStudies : studies(all)
+  const s = frame === 60 ? data.hourlyStudies : cache.frameStudies(source, m, frame, all)
   const shown = new Set(state.indicators ?? defaultIndicators)
   const levels = chartLevels(all)
   const signal = currentSetup(m)
@@ -317,15 +317,13 @@ function table(headers, body) {
   return `<div class="table-scroll"><table><thead><tr>${headers.map(name => `<th scope="col">${name}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`
 }
 const empty = msg => `<p class="empty">${msg}</p>`
-const closedBefore = (bars, before) => bars.filter(b => b.t + M15 <= before)
 function scanRows() {
   return MARKETS.flatMap(m => {
     const signal = currentSetup(m)
     if (!signal || (signal.outcome && !['Waiting','Open'].includes(signal.outcome))) return []
     const source = srcFor(m)
     const version = signal.version ?? activeVersion(m)
-    const history = backtest(research(closedBefore(barsFor(m), signal.setupAt - 60 * MINUTE)), m, source)
-    const evidence = stats(history.late.filter(s => s.strategy === signal.strategy && (version === 'base' || s.strict)))
+    const evidence = cache.evidence(source, m, barsFor(m), signal.setupAt, signal.setupAt - 60 * MINUTE, version, signal.strategy)
     return [{ m, signal, evidence, rank: evidence.count >= 10 ? evidence.avg : null }]
   }).sort((a,b) => {
     if (a.rank !== null && b.rank !== null) return b.rank - a.rank || b.signal.score - a.signal.score
