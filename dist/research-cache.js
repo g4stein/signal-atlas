@@ -25,6 +25,7 @@ export function closedBefore(bars, before) {
   return lo === bars.length ? bars : bars.slice(0, lo)
 }
 
+// Feed updates replace candle arrays and rows; cached snapshots are immutable.
 export function createResearchCache(runBacktest = backtest) {
   const streams = new Map()
   function stream(source, market) {
