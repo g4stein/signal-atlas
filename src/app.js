@@ -3,6 +3,7 @@ import { CandlestickChart, indicators, defaultIndicators } from './chart.js'
 import { closedBefore, createResearchCache } from './research-cache.js'
 import { journalCSV, parseJournalCSV, mergeJournal } from './journal.js'
 import { COINBASE, DEMO, PROMOTION, STORAGE } from './config.js'
+import { buildReviewRequest, captureReviewChart, requestReview } from './ai-review.js'
 
 const icons = {
   chart: '<path d="M3 3v17h18M6 14l4-4 4 2 6-7"/>',
@@ -58,6 +59,8 @@ let labCache
 let lastScanCount = null
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const dialogOpeners = new WeakMap()
+const chartReviews = new Map()
+const renderedReviews = new WeakMap()
 
 function showDialog(id, opener = document.activeElement) {
   const dialog = $(id)
@@ -338,12 +341,13 @@ function renderAnalysis(m, data, all, s, levels, signal) {
   const button = signal?.id ? `<button class="btn" data-signal="${clean(signal.id)}">View paper signal</button>` : ''
   const lastLines = signal ? level('Entry trigger', fmt(m, signal.entry)) + level('Stop', fmt(m, signal.stop), 'down') + level('Target', fmt(m, signal.target), 'up')
     : level('Support', fmt(m, levels?.support)) + level('Resistance', fmt(m, levels?.resistance)) + level('ATR 14', atr == null ? '—' : fmt(m, atr))
-  $('analysis').innerHTML = `<div class="analysis-top"><h2>${icon('layers')}Technical analysis</h2><span class="pill">${frame === 15 ? '15m' : frame / 60 + 'H'}</span></div><div class="analysis-body">
+  $('analysis-content').innerHTML = `<div class="analysis-top"><h2>${icon('layers')}Technical analysis</h2><span class="pill">${frame === 15 ? '15m' : frame / 60 + 'H'}</span></div><div class="analysis-body">
   <div class="signal-summary"><div class="signal-title"><strong>${title}</strong>${signal ? directionPill(signal.direction) : ''}</div><p>${clean(desc)}</p></div>
   <div><h3>Market conditions</h3><dl class="detail-list">${level('4H context', bias, bias === 'Bullish' ? 'up' : bias === 'Bearish' ? 'down' : '')}${level('EMA trend', trend)}${level('RSI 14', rsi == null ? '—' : rsi.toFixed(1))}${level('ATR %', atr != null && current ? (atr / current * 100).toFixed(2) + '%' : '—')}</dl></div>
   <div><h3>${signal ? 'Paper trade levels' : 'Key levels'}</h3><dl class="detail-list">${lastLines}</dl></div>
   </div><div class="analysis-foot">${button}</div>`
-  hydrate($('analysis'))
+  hydrate($('analysis-content'))
+  setReviewPanel($('analysis-review'), signal)
 }
 
 function table(headers, body) {
@@ -418,6 +422,71 @@ function renderLab() {
   <section class="panel lab-card"><h2>Forward paper comparison</h2><p>${promotion ? 'Outcomes frozen at promotion.' : 'Compares saved baseline signals with the subset the candidate would accept.'}</p>${compareTable(paper)}</section></div>
   <section class="panel lab-card"><h2>Promotion criteria</h2><p>At least ${PROMOTION.historical} priced outcomes per strategy on held-out candles and ${PROMOTION.forward} per strategy in the forward journal. The candidate must be positive after costs, improve average return by at least ${PROMOTION.averageGainR.toFixed(2)}R, and stay at or below baseline drawdown in both windows.</p><dl class="detail-list">${diagnostics.map(([label, value]) => level(label, value)).join('')}</dl></section>`
 }
+function setReviewPanel(panel, signal) {
+  panel.hidden = !signal?.id
+  panel.dataset.signalId = signal?.id ?? ''
+  updateReviewPanel(panel)
+}
+
+function updateReviewPanel(panel) {
+  const id = panel.dataset.signalId
+  if (!id) return
+  const saved = chartReviews.get(id)
+  const previous = renderedReviews.get(panel)
+  if (previous?.id === id && previous.saved === saved) return
+  renderedReviews.set(panel, { id, saved })
+  const button = panel.querySelector('[data-review]')
+  button.setAttribute('aria-disabled', String(Boolean(saved?.loading)))
+  button.textContent = saved?.loading ? 'Reviewing chart…' : saved?.result ? 'Review again' : 'Review with Gemini'
+  const output = panel.querySelector('.review-output')
+  if (saved?.loading) {
+    output.textContent = 'Gemini is reviewing the setup.'
+  } else if (saved?.error) {
+    output.textContent = saved.error
+  } else if (saved?.result) {
+    const { model, reviewedAt, review } = saved.result
+    const verdictClass = review.verdict === 'confirm' ? 'up' : review.verdict === 'skip' ? 'down' : ''
+    const flags = review.riskFlags.length
+      ? `<ul class="review-flags">${review.riskFlags.map(flag => `<li>${clean(flag)}</li>`).join('')}</ul>` : ''
+    output.innerHTML = `<div class="review-result">
+      <div class="review-labels"><strong class="pill ${verdictClass}">${clean(review.verdict)}</strong><span>${clean(review.regime)}</span></div>
+      <p class="sub">Model confidence ${clean(review.confidence)}/100</p>
+      <p>${clean(review.summary)}</p>${flags}
+      <p><strong>Invalidation</strong> ${clean(review.invalidationNote)}</p>
+      <p class="sub">${clean(model)} · ${dateUTC(Date.parse(reviewedAt))}</p></div>`
+  } else {
+    output.textContent = ''
+  }
+}
+
+async function reviewSignal(panel) {
+  const id = panel.dataset.signalId
+  const signal = state.journal?.[id]
+  if (!signal || chartReviews.get(id)?.loading) return
+  const refresh = () => {
+    for (const container of [$('analysis-review'), $('signal-review')]) {
+      if (container.dataset.signalId === id) updateReviewPanel(container)
+    }
+  }
+  chartReviews.set(id, { loading: true })
+  refresh()
+  try {
+    const m = byMarket[signal.symbol]
+    const bars = barsFor(m, signal.source)
+    const displayedSignal = chart.data?.signal
+    // A later chart or another timeframe would expose prices beyond the setup.
+    const snapshot = view === 'terminal' && frame === 60 && displayedSignal?.id === id &&
+      chart.data.all.at(-1)?.t + 60 * MINUTE === signal.setupAt
+      ? captureReviewChart($('chart')) : undefined
+    const heldOut = cache.evidence(signal.source, m, bars, signal.setupAt, signal.setupAt - 60 * MINUTE, signal.version, signal.strategy)
+    const result = await requestReview(buildReviewRequest(m, signal, bars, heldOut, snapshot))
+    chartReviews.set(id, { result })
+  } catch (error) {
+    chartReviews.set(id, { error: error.message })
+  }
+  refresh()
+}
+
 function openSignal(id, opener) {
   const s = state.journal?.[id]
   if (!s) return
@@ -427,6 +496,7 @@ function openSignal(id, opener) {
     ${level('Entry trigger', fmt(m,s.entry))}${level('Stop', fmt(m,s.stop), 'down')}${level('Target', fmt(m,s.target), 'up')}
     ${level('Outcome', s.outcome)}${level('Resolved', dateUTC(s.finished))}${level('Paper fill', fmt(m,s.fill))}${level('Exit', fmt(m,s.exitPrice))}${level('Round-trip cost', (s.cost * 100).toFixed(3) + '%')}${level('Net return', s.netR == null ? '—' : signed(s.netR) + 'R')}
     </dl><p>1R equals the original entry-to-stop distance. Once triggered, an open position exits after 24 15m candles if neither level is reached.</p>`
+  setReviewPanel($('signal-review'), s)
   showDialog('signal-dialog', opener)
 }
 function exportJournal() {
@@ -543,6 +613,7 @@ document.addEventListener('click', event => {
   }
   if (action.close) $(action.close).close()
   if (action.signal) openSignal(action.signal, btn)
+  if (action.review !== undefined) void reviewSignal(btn.closest('.ai-review'))
   if (btn.id === 'restore-baseline') {
     const key = [srcFor(market()), symbol].join('|')
     void withStorageLock(() => {

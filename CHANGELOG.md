@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a Vercel Gemini 4 Hydrogen route and on-demand review in the Terminal and paper signal details. Reviews use setup-time context and leave engine outputs intact.
+
 - Cached scanner evidence and non-hourly chart studies by their candle history. Scanner ranking results match the uncached calculation.
 - Added UTC handling for zone-free ISO candle timestamps, CSV quoting and clearer validation, Coinbase timeout compatibility and rate-limit backoff, and chart size guards.
 - Moved authored files into `src/` and added a deterministic build, a local server, Node tests, and GitHub Actions checks.

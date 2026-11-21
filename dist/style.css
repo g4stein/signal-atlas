@@ -169,3 +169,15 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .replay{flex-wrap:wrap}
 .btn.danger{color:var(--red);border-color:#684353}
 @media(max-width:550px){#journal .heading{flex-wrap:wrap}.journal-actions{justify-content:flex-start}}
+#analysis-content{display:flex;flex-direction:column;flex:1}
+.ai-review{display:grid;gap:7px;padding:12px 13px;border-top:1px solid var(--border)}
+.ai-review .btn{justify-self:start}
+.ai-review button[aria-disabled=true]{cursor:wait;opacity:.7}
+.ai-review .sub{font-size:.78rem}
+.review-output{font-size:.83rem;color:var(--muted);overflow-wrap:anywhere}
+.review-output:empty{display:none}
+.review-result{display:grid;gap:6px;border:1px solid var(--border);border-radius:8px;padding:9px}
+.review-result p,#signal-dialog .ai-review p{margin:0}
+.review-labels{display:flex;align-items:center;flex-wrap:wrap;gap:7px;text-transform:capitalize}
+.review-flags{margin:0;padding-inline-start:18px}
+#signal-review{margin-top:12px;padding:12px 0 0}

@@ -1,6 +1,6 @@
 # Signal Atlas
 
-**Paper trading only. Nothing in Signal Atlas is financial advice.** Signal Atlas is a static browser terminal for forex and crypto charts, rule-based setups, simulated trades, and strategy research. The app uses native JavaScript modules and has zero dependencies.
+**Paper trading only. Nothing in Signal Atlas is financial advice.** Signal Atlas is a static browser terminal for forex and crypto charts, rule-based setups, simulated trades, and strategy research. The app uses native JavaScript modules and has zero dependencies. Gemini chart review is optional and uses a server-side endpoint.
 
 <!-- Screenshot placeholder for the Market Terminal showing the candlestick chart, technical analysis, and ranked setups. -->
 
@@ -61,6 +61,16 @@ Entry is just beyond the setup candle by 0.04 ATR. The stop is 1.2 ATR from entr
 | Volume | Candle volume when supplied by the data source. |
 
 The candidate momentum filter requires directional RSI momentum of at least seven points from 50 and EMA separation of at least 0.80 ATR. Promotion requires at least 15 priced outcomes per strategy in the held-out replay and 30 per strategy in the forward journal. In each window the candidate must be positive after costs, improve the mean by at least 0.10R, and have no more realized drawdown than the baseline.
+
+## Gemini chart review
+
+Select **Review with Gemini** on a qualifying paper signal in the Terminal or signal detail dialog. The review uses the last 40 closed 1H candles at the setup close, the 4H trend, and held-out evidence. The matching 1H canvas is included when it is visible and fits the image limit. A historical signal needs its original candle history available to review. Reviews stay in memory for the current page session.
+
+Gemini returns a verdict, confidence score, regime, risk flags, summary, and invalidation note. The score reflects the model's assessment. The deterministic engine continues to issue signals, calculate levels, and track outcomes.
+
+To enable reviews, set the server environment variable `GEMINI_API_KEY` in Vercel. The route defaults to `gemini-4-hydrogen`. If setting `GEMINI_MODEL` explicitly, use that same model ID. The key belongs in the server environment. For local testing, export the same variable in the shell before running `npm run dev`.
+
+Vercel builds with `npm run build`, serves `dist/`, and runs `api/ai-review.js` separately. Deploy the repository root so the serverless route is included. A static-only deployment can serve the Terminal, scanner, and journal. Chart review requires a host running the API route.
 
 ## Simulation limits
 
