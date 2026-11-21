@@ -167,7 +167,7 @@ export default async function handler(req, res) {
         systemInstruction: { parts: [{ text: instruction }] },
         contents: [{ role: 'user', parts }],
         generationConfig: {
-          thinkingConfig: { thinkingLevel: 'medium' },
+          thinkingConfig: { thinkingLevel: 'high' },
           responseMimeType: 'application/json',
           responseSchema,
         },

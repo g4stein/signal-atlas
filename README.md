@@ -68,7 +68,7 @@ Select **Review with Gemini** on a qualifying paper signal in the Terminal or si
 
 Gemini returns a verdict, confidence score, regime, risk flags, summary, and invalidation note. The score reflects the model's assessment. The deterministic engine continues to issue signals, calculate levels, and track outcomes.
 
-To enable reviews, set the server environment variable `GEMINI_API_KEY` in Vercel. The route defaults to `gemini-4-hydrogen`. If setting `GEMINI_MODEL` explicitly, use that same model ID. The key belongs in the server environment. For local testing, export the same variable in the shell before running `npm run dev`.
+To enable reviews, set the server environment variable `GEMINI_API_KEY` in Vercel. The route uses `gemini-4-hydrogen` with High thinking. If setting `GEMINI_MODEL` explicitly, use that same model ID. The key belongs in the server environment. For local testing, export the same variable in the shell before running `npm run dev`.
 
 Vercel builds with `npm run build`, serves `dist/`, and runs `api/ai-review.js` separately. Deploy the repository root so the serverless route is included. A static-only deployment can serve the Terminal, scanner, and journal. Chart review requires a host running the API route.
 

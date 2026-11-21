@@ -68,7 +68,7 @@ test('API only accepts POST and reports a missing key without calling Gemini', a
   assert.equal(upstream.mock.callCount(), 0)
 })
 
-test('API uses Hydrogen, a header-only key, medium thinking, structured JSON, and optional PNG', async t => {
+test('API uses Hydrogen, a header-only key, high thinking, structured JSON, and optional PNG', async t => {
   setEnv(t, 'GEMINI_API_KEY', 'mock-key')
   setEnv(t, 'GEMINI_MODEL')
   const upstream = t.mock.method(globalThis, 'fetch', async (url, options) => {
@@ -77,7 +77,7 @@ test('API uses Hydrogen, a header-only key, medium thinking, structured JSON, an
     assert.ok(options.signal instanceof AbortSignal)
     assert.ok(!options.body.includes('mock-key'))
     const body = JSON.parse(options.body)
-    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: 'medium' })
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: 'high' })
     assert.equal(body.generationConfig.responseMimeType, 'application/json')
     assert.equal(body.generationConfig.responseSchema.properties.riskFlags.maxItems, 4)
     const [numbers, image] = body.contents[0].parts
