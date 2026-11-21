@@ -1,4 +1,5 @@
 import { MINUTE } from './engine.js'
+import { CHART } from './config.js'
 
 export const indicators = {
   ema20: ['EMA 20', '#b39bff'],
@@ -15,12 +16,12 @@ const colors = { grid: '#282a39', dim: '#9699b1', green: '#54cdae', red: '#ed788
 const mono = '11px ui-monospace, monospace'
 
 export function plotGeometry(width, height, allowedPanes) {
-  const right = Math.min(width, Math.max(1, width - (width < 400 ? 66 : 83)))
-  const bottomAxis = Math.max(1, height - 23)
-  const top = Math.max(0, Math.min(29, bottomAxis - 1))
+  const right = Math.min(width, Math.max(CHART.minPlotWidth, width - (width < CHART.compactWidth ? CHART.compactAxis : CHART.priceAxis)))
+  const bottomAxis = Math.max(1, height - CHART.timeAxis)
+  const top = Math.max(0, Math.min(CHART.top, bottomAxis - 1))
   const panes = [...allowedPanes]
-  const paneHeight = () => panes.length === 3 ? 39 : 49
-  while (panes.length && bottomAxis - top - panes.length * paneHeight() < 48) panes.pop()
+  const paneHeight = () => panes.length === 3 ? CHART.compactPaneHeight : CHART.paneHeight
+  while (panes.length && bottomAxis - top - panes.length * paneHeight() < CHART.minPriceHeight) panes.pop()
   const paneH = paneHeight()
   return { right, top, bottomAxis, bottom: bottomAxis - panes.length * paneH, panes, paneH }
 }
@@ -30,7 +31,7 @@ export class CandlestickChart {
     this.canvas = canvas
     this.ctx = canvas.getContext('2d')
     this.options = options
-    this.limit = 70
+    this.limit = CHART.visibleBars
     this.tool = 'cursor'
     this.hover = null
     this.anchor = null
@@ -55,9 +56,9 @@ export class CandlestickChart {
       if (this.anchor) this.anchor = null
       else this.options.remove()
     } else if (tool === 'zoom-in') {
-      this.limit = Math.max(16, this.limit - 12)
+      this.limit = Math.max(CHART.minBars, this.limit - CHART.zoomStep)
     } else if (tool === 'zoom-out') {
-      this.limit = Math.min(200, this.limit + 12)
+      this.limit = Math.min(CHART.maxBars, this.limit + CHART.zoomStep)
     } else {
       if (tool !== this.tool) this.anchor = null
       this.tool = tool
@@ -110,7 +111,7 @@ export class CandlestickChart {
     const overlay = projected.filter(Number.isFinite)
     const high = Math.max(...bars.map(b => b.h), ...overlay)
     const low = Math.min(...bars.map(b => b.l), ...overlay)
-    const padding = Math.max(Number.MIN_VALUE, (high - low || high * .002) * .08)
+    const padding = Math.max(Number.MIN_VALUE, (high - low || high * CHART.flatRange) * CHART.pricePadding)
     const max = Math.min(Number.MAX_VALUE, high + padding), min = Math.max(0, low - padding)
     const dx = right / (bars.length + 3)
     const x = i => (i + .5) * dx

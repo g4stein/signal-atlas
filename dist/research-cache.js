@@ -51,7 +51,7 @@ export function createResearchCache(runBacktest = backtest) {
     evidence(source, market, bars, setupAt, cutoff, version, strategy) {
       const entry = stream(source, market)
       let cached = entry.evidence
-      if (cached?.bars !== bars || cached?.setupAt !== setupAt) {
+      if (cached?.bars !== bars || cached?.setupAt !== setupAt || cached.cutoff !== cutoff) {
         const sample = closedBefore(bars, cutoff)
         // New 15m candles beyond the cutoff cannot change this setup's evidence.
         if (cached?.setupAt === setupAt && cached.cutoff === cutoff &&

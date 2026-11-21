@@ -1,4 +1,5 @@
 import { readCSVLine } from './csv.js'
+import { DEMO, SIGNAL, PROMOTION, COINBASE } from './config.js'
 
 export const MINUTE = 60000
 export const M15 = 15 * MINUTE
@@ -43,16 +44,15 @@ export function aggregate(bars, minutes) {
 
 export function demoBars(market) {
   const index = MARKETS.indexOf(market)
-  let seed = 457 + index * 7121
+  let seed = DEMO.seed + index * DEMO.marketSeedStep
   function random() {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
     return seed / 4294967296
   }
-  const start = Date.UTC(2025, 8, 8)
   const scale = market.kind === 'Crypto' ? 1 : 0.31
   const direction = index === 4 ? -1 : 1
   let price = market.base * .965
-  return Array.from({ length: 1904 }, (_, n) => {
+  return Array.from({ length: DEMO.length }, (_, n) => {
     const o = price
     const cycle = Math.sin((n + index * 38) / 41) * .0006 + Math.cos((n + index * 28) / 15) * .00056
     const bias = Math.sin(n / 142 + index) * .00028 + .000035
@@ -62,7 +62,7 @@ export function demoBars(market) {
     const h = Math.max(o, price) * (1 + scale * (.00022 + random() * .00136))
     const l = Math.min(o, price) * (1 - scale * (.00019 + random() * .00122))
     const v = market.kind === 'Crypto' ? Math.round((30 + 130 * random() + Math.abs(price / o - 1) * 27500) * 10) / 10 : null
-    return { t: start + n * M15, o, h, l, c: price, v }
+    return { t: DEMO.start + n * M15, o, h, l, c: price, v }
   })
 }
 
@@ -137,7 +137,7 @@ const rateLimited = 'Coinbase rate limit (HTTP 429). The feed will pause before 
 
 async function fetchCoinbaseChunk(market, since, until) {
   const query = new URLSearchParams({ granularity: '900', start: new Date(since).toISOString(), end: new Date(until).toISOString() })
-  const ms = 11000
+  const ms = COINBASE.timeoutMs
   const controller = typeof AbortSignal.timeout === 'function' ? null : new AbortController()
   const timer = controller ? setTimeout(() => controller.abort(), ms) : null
   try {
@@ -146,7 +146,7 @@ async function fetchCoinbaseChunk(market, since, until) {
     if (response.status === 429) {
       const raw = response.headers.get('Retry-After')
       const delay = raw && /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw ?? '') - Date.now()
-      coinbaseRetryAt = Math.max(coinbaseRetryAt, Date.now() + (finite(delay) ? Math.max(60000, delay) : 60000))
+      coinbaseRetryAt = Math.max(coinbaseRetryAt, Date.now() + (finite(delay) ? Math.max(COINBASE.pollMs, delay) : COINBASE.pollMs))
       throw Error(rateLimited)
     }
     if (!response.ok) throw Error(`Coinbase returned HTTP ${response.status}.`)
@@ -165,9 +165,9 @@ async function fetchCoinbaseChunk(market, since, until) {
 export async function fetchCoinbase(market) {
   if (Date.now() < coinbaseRetryAt) throw Error(rateLimited)
   const end = Math.floor(Date.now() / M15) * M15
-  const chunks = await Promise.all([0, 1, 2, 3].map(index => {
-    const until = end - index * 285 * M15
-    return fetchCoinbaseChunk(market, until - 285 * M15, until)
+  const chunks = await Promise.all(Array.from({ length: COINBASE.chunks }, (_, index) => {
+    const until = end - index * COINBASE.chunkBars * M15
+    return fetchCoinbaseChunk(market, until - COINBASE.chunkBars * M15, until)
   }))
   const bars = [...new Map(chunks.flat().map(bar => [bar.t, bar])).values()].sort((a,b) => a.t - b.t)
   if (bars.length < 320) throw Error('Coinbase returned too little candle history.')
@@ -240,20 +240,20 @@ function setupsAt(data, index) {
   const support = Math.min(...prior.map(bar => bar.l))
   const breakout = direction > 0 ? c > resistance : c < support
   const pullback = direction > 0
-    ? Math.min(l, prev.l) <= emaValue + .28 * atr && c > prev.c
-    : Math.max(h, prev.h) >= emaValue - .28 * atr && c < prev.c
+    ? Math.min(l, prev.l) <= emaValue + SIGNAL.pullbackToleranceATR * atr && c > prev.c
+    : Math.max(h, prev.h) >= emaValue - SIGNAL.pullbackToleranceATR * atr && c < prev.c
   if (!breakout && !pullback) return []
   // A simultaneous breakout and pullback yields one hypothesis and one journal entry.
   const strategy = breakout ? 'Range breakout' : 'Trend pullback'
-  const entry = direction > 0 ? h + .04 * atr : l - .04 * atr
-  const risk = 1.2 * atr
+  const entry = direction > 0 ? h + SIGNAL.entryBufferATR * atr : l - SIGNAL.entryBufferATR * atr
+  const risk = SIGNAL.riskATR * atr
   const stop = entry - direction * risk
-  const target = entry + direction * risk * 2
+  const target = entry + direction * risk * SIGNAL.targetR
   if (stop <= 0 || target <= 0) return []
   const strength = Math.abs(emaValue - s.ema50[index]) / atr
   return [{
     direction, strategy, entry, stop, target, risk, rsi, support, resistance, atr,
-    strict: momentum >= 7 && strength >= .80,
+    strict: momentum >= SIGNAL.strictMomentum && strength >= SIGNAL.strictStrength,
     score: Math.round(clamp(46 + momentum * .85 + strength * 5 + (breakout ? 8 : 0), 0, 96)),
     setupAt: candle.t + HOUR,
   }]
@@ -270,7 +270,7 @@ export function issue(setup, market, source, version, issued) {
   return {
     ...setup, symbol: market.id, source, version, issued, cost: market.cost,
     id: [source, market.id, setup.setupAt].join('|'),
-    expires: issued + 8 * M15, outcome: 'Waiting', seenThrough: issued,
+    expires: issued + SIGNAL.expiryBars * M15, outcome: 'Waiting', seenThrough: issued,
   }
 }
 
@@ -312,7 +312,7 @@ export function advance(signal, bars) {
       if ((long && fill >= s.target) || (!long && fill <= s.target)) return finish(s, 'Expired', t)
       if (gapStop) return finish(s, 'Expired', t)
       if (!entryAtOpen && stopHit) return finish(s, 'Ambiguous', end)
-      s = { ...s, outcome: 'Open', fill, filled: t, timeExit: t + 24 * M15 }
+      s = { ...s, outcome: 'Open', fill, filled: t, timeExit: t + SIGNAL.exitBars * M15 }
     }
     if (wasOpen && gapStop) return finish(s, 'Stop', t, o)
     if (wasOpen && gapTarget) return finish(s, 'Target', t, s.target)
@@ -362,5 +362,5 @@ export function compare(entries) {
 }
 
 export function clearsGate({ base, strict }, min) {
-  return base.count >= min && strict.count >= min && strict.avg > 0 && strict.avg >= base.avg + .1 && strict.drawdown <= base.drawdown
+  return base.count >= min && strict.count >= min && strict.avg > 0 && strict.avg >= base.avg + PROMOTION.averageGainR && strict.drawdown <= base.drawdown
 }

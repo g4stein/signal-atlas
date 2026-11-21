@@ -2,6 +2,7 @@ import { MARKETS, M15, MINUTE, versions, demoBars, parseCSV, mergeImports, fetch
 import { CandlestickChart, indicators, defaultIndicators } from './chart.js'
 import { closedBefore, createResearchCache } from './research-cache.js'
 import { csvCell } from './csv.js'
+import { COINBASE, DEMO, PROMOTION, STORAGE } from './config.js'
 
 const icons = {
   chart: '<path d="M3 3v17h18M6 14l4-4 4 2 6-7"/>',
@@ -27,8 +28,6 @@ const $ = id => document.getElementById(id)
 const byMarket = Object.fromEntries(MARKETS.map(m => [m.id, m]))
 const sources = { demo: 'Demo replay', live: 'Coinbase Exchange', csv: 'Imported CSV' }
 const views = { terminal: 'Terminal', scanner: 'Market scanner', journal: 'Signal journal', lab: 'Strategy lab' }
-const storageKey = 'signal-atlas-v1'
-const DEMO_START = 1552
 const demo = Object.fromEntries(MARKETS.map(m => [m.id, demoBars(m)]))
 const DEMO_END = demo[MARKETS[0].id].length
 const market = () => byMarket[symbol]
@@ -60,14 +59,14 @@ let lastScanCount = null
 
 function readState() {
   try {
-    return JSON.parse(localStorage.getItem(storageKey)) ?? {}
+    return JSON.parse(localStorage.getItem(STORAGE.localKey)) ?? {}
   } catch {
     return {}
   }
 }
 function persist() {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(state))
+    localStorage.setItem(STORAGE.localKey, JSON.stringify(state))
     return true
   } catch {
     toast('Browser storage is unavailable or full. Export your journal to keep a copy.')
@@ -87,8 +86,8 @@ function hydrate(root = document) {
 }
 function openImports() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('signal-atlas-imports', 1)
-    request.onupgradeneeded = () => request.result.createObjectStore('candles')
+    const request = indexedDB.open(STORAGE.database, STORAGE.version)
+    request.onupgradeneeded = () => request.result.createObjectStore(STORAGE.store)
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
   })
@@ -97,7 +96,7 @@ async function readImports() {
   const db = await openImports()
   try {
     const data = await Promise.all(MARKETS.map(m => new Promise((resolve, reject) => {
-      const request = db.transaction('candles').objectStore('candles').get(m.id)
+      const request = db.transaction(STORAGE.store).objectStore(STORAGE.store).get(m.id)
       request.onsuccess = () => resolve([m.id, request.result])
       request.onerror = () => reject(request.error)
     })))
@@ -108,8 +107,8 @@ async function saveImport(id, incoming) {
   const db = await openImports()
   try {
     return await new Promise((resolve, reject) => {
-      const transaction = db.transaction('candles', 'readwrite')
-      const store = transaction.objectStore('candles')
+      const transaction = db.transaction(STORAGE.store, 'readwrite')
+      const store = transaction.objectStore(STORAGE.store)
       const request = store.get(id)
       let merged, mergeError
       request.onsuccess = () => {
@@ -129,7 +128,7 @@ async function saveImport(id, incoming) {
 
 function barsFor(m, source = srcFor(m)) {
   if (source === 'demo') {
-    const length = state.replay ?? DEMO_START
+    const length = state.replay ?? DEMO.initialBars
     if (replayWindows.get(m.id)?.length !== length) replayWindows.set(m.id, demo[m.id].slice(0, length))
     return replayWindows.get(m.id)
   }
@@ -162,7 +161,7 @@ function persistScan() {
   state.promoted = { ...state.promoted, ...saved.promoted }
   state.historical = { ...state.historical, ...saved.historical }
   state.mode = mode
-  state.replay = Math.max(state.replay ?? DEMO_START, saved.replay ?? DEMO_START)
+  state.replay = Math.max(state.replay ?? DEMO.initialBars, saved.replay ?? DEMO.initialBars)
   const entries = state.journal
   let issued = 0
   for (const m of MARKETS) {
@@ -175,10 +174,10 @@ function persistScan() {
     if (!available(m, source)) continue
     const key = [source, m.id].join('|')
     const historical = state.historical[key]
-    if (historical && !state.promoted[key] && clearsGate(historical.heldOut, 15)) {
+    if (historical && !state.promoted[key] && clearsGate(historical.heldOut, PROMOTION.historical)) {
       const forward = Object.values(entries).filter(s => s.source === source && s.symbol === m.id && s.version === 'base')
       const prospective = compare(forward)
-      if (clearsGate(prospective, 30)) {
+      if (clearsGate(prospective, PROMOTION.forward)) {
         state.promoted[key] = { version: 'strict', at: data.bars.at(-1).t + M15, evidence: { ...historical, forward: prospective } }
       }
     }
@@ -202,7 +201,7 @@ function persistScan() {
   return issued
 }
 async function recordScan() {
-  return navigator.locks ? navigator.locks.request(storageKey, persistScan) : persistScan()
+  return navigator.locks ? navigator.locks.request(STORAGE.localKey, persistScan) : persistScan()
 }
 function quoteChange(m) {
   const bars = barsFor(m)
@@ -282,7 +281,7 @@ function renderChart() {
   }).join('')
   $('replay').hidden = mode !== 'demo'
   $('replay-date').textContent = data.bars.length ? dateUTC(data.bars.at(-1).t + M15).slice(5) : ''
-  $('replay-step').disabled = (state.replay ?? DEMO_START) >= DEMO_END
+  $('replay-step').disabled = (state.replay ?? DEMO.initialBars) >= DEMO_END
   $('replay-play').disabled = $('replay-step').disabled
   document.querySelectorAll('[data-frame]').forEach(el => {
     const on = Number(el.dataset.frame) === frame
@@ -384,7 +383,7 @@ function renderLab() {
   $('lab-content').innerHTML = `<section class="panel lab-card lab-top"><div class="table-heading"><div class="filters"><h2>Research market</h2><select id="lab-market" aria-label="Research market">${MARKETS.map(x => `<option value="${x.id}" ${x.id === symbol ? 'selected' : ''}>${x.name}</option>`).join('')}</select><span class="sub">${sources[source]}</span></div><span class="pill ${active === 'strict' ? 'up' : ''}">Active · ${versions[active]}</span></div><p>${promotion?.hold ? 'The baseline was restored. Automatic promotion is paused for this market and data source.' : promotion ? `The momentum filter was promoted on ${dateUTC(promotion.at)}. <button class="btn" id="restore-baseline">Restore baseline</button>` : 'The momentum filter is evaluated automatically after scans. It requires stronger RSI and wider EMA separation.'}</p></section>
   <div class="lab-grid"><section class="panel lab-card"><h2>Held-out replay</h2><p>${splitAt ? `Last 35% of pre-journal 1H candles from ${dateUTC(splitAt)}.` : 'Load more historical candles to evaluate the held-out window.'}</p>${compareTable(tested)}</section>
   <section class="panel lab-card"><h2>Forward paper comparison</h2><p>${promotion ? 'Outcomes frozen at promotion.' : 'Compares saved baseline signals with the subset the candidate would accept.'}</p>${compareTable(paper)}</section></div>
-  <section class="panel lab-card"><h2>Promotion criteria</h2><p>At least 15 priced outcomes per strategy on held-out candles and 30 per strategy in the forward journal. The candidate must be positive after costs, improve average return by at least 0.10R, and stay at or below baseline drawdown in both windows.</p><dl class="detail-list">${diagnostics.map(([label, value]) => level(label, value)).join('')}</dl></section>`
+  <section class="panel lab-card"><h2>Promotion criteria</h2><p>At least ${PROMOTION.historical} priced outcomes per strategy on held-out candles and ${PROMOTION.forward} per strategy in the forward journal. The candidate must be positive after costs, improve average return by at least ${PROMOTION.averageGainR.toFixed(2)}R, and stay at or below baseline drawdown in both windows.</p><dl class="detail-list">${diagnostics.map(([label, value]) => level(label, value)).join('')}</dl></section>`
 }
 function openSignal(id) {
   const s = state.journal?.[id]
@@ -473,7 +472,7 @@ function stopReplay() {
 }
 async function step() {
   if (mode !== 'demo' || scanInProgress) return
-  state.replay = Math.min(DEMO_END, (state.replay ?? DEMO_START) + 1)
+  state.replay = Math.min(DEMO_END, (state.replay ?? DEMO.initialBars) + 1)
   if (state.replay === DEMO_END) stopReplay()
   await sceneScan({ silent: true, refresh: false })
 }
@@ -487,7 +486,7 @@ function setMode(next) {
     $('journal-source').value = srcFor(market())
     autoTimer = setInterval(() => {
       if (mode === 'live' && !document.hidden) void sceneScan({ silent: true })
-    }, 60000)
+    }, COINBASE.pollMs)
   } else $('journal-source').value = 'demo'
   render()
   void sceneScan({ silent: true })
@@ -542,7 +541,7 @@ $('replay-play').addEventListener('click', () => {
   $('replay-play').setAttribute('aria-label','Pause replay')
   $('replay-play').title = 'Pause replay'
   hydrate($('replay-play'))
-  timer = setInterval(step, 700)
+  timer = setInterval(step, DEMO.replayIntervalMs)
 })
 $('indicator-open').addEventListener('click', () => {
   $('indicators').innerHTML = Object.entries(indicators).map(([id,[label]]) => `<label><input type="checkbox" value="${id}" ${(state.indicators ?? defaultIndicators).includes(id) ? 'checked' : ''}>${label}</label>`).join('')
@@ -581,7 +580,7 @@ $('import-form').addEventListener('submit', async event => {
   } finally { submit.disabled = false }
 })
 window.addEventListener('storage', event => {
-  if (event.key !== storageKey) return
+  if (event.key !== STORAGE.localKey) return
   const saved = readState()
   state = { ...saved, mode }
   render()
