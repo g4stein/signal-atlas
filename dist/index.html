@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111219">
+<title>Signal Atlas — Market Terminal</title>
+<meta name="description" content="A forex and crypto chart analysis, replay, and paper signal terminal.">
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./app.js"></script>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar" aria-label="Sidebar">
+  <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17 9 6l4 7 3-5 5 9M7 17h10" /></svg></div><div>Signal Atlas<small>MARKET RESEARCH</small></div></div>
+  <div class="side-label">WORKSPACE</div>
+  <nav aria-label="Workspace">
+    <button class="nav active" data-view="terminal"><i data-icon="chart"></i>Terminal</button>
+    <button class="nav" data-view="scanner"><i data-icon="radar"></i>Market scanner</button>
+    <button class="nav" data-view="journal"><i data-icon="book"></i>Signal journal</button>
+    <button class="nav" data-view="lab"><i data-icon="layers"></i>Strategy lab</button>
+  </nav>
+  <div class="side-label watch-title">WATCHLIST</div>
+  <div id="watchlist" class="watchlist"></div>
+  <div class="side-foot"><button data-view="journal" class="account"><span class="avatar">P</span><span>Paper profile<small>Local journal</small></span><i data-icon="chevron"></i></button></div>
+</aside>
+<div class="main">
+  <header class="topbar">
+    <div class="crumb"><span>Workspace</span><i data-icon="chevron"></i><strong id="crumb">Terminal</strong></div>
+    <div class="top-actions">
+      <label class="source"><span class="status-dot"></span><select id="mode" aria-label="Market data source"><option value="demo">Demo replay</option><option value="live">Market data</option></select></label>
+      <button class="btn import" id="import-open"><i data-icon="upload"></i><span>Import CSV</span></button>
+    </div>
+  </header>
+  <main>
+    <section id="terminal" class="view">
+      <div class="heading"><div><div class="eyebrow"><span></span>TRADING WORKSPACE</div><h1>Market Terminal</h1><p>Chart analysis and paper signals for forex and crypto.</p></div><button class="btn primary" id="scan-main"><i data-icon="radar"></i>Run scan</button></div>
+      <div id="market-strip" class="market-strip"></div>
+      <div class="terminal-grid">
+        <section class="panel chart-panel" aria-label="Market chart">
+          <div class="chart-head"><div class="market-name"><div id="asset-badge" class="asset"></div><div><h2 id="asset-name"></h2><div id="chart-source" class="sub"></div></div></div><div class="chart-actions"><div class="seg" aria-label="Chart timeframe"><button data-frame="15">15m</button><button data-frame="60" class="selected">1H</button><button data-frame="240">4H</button></div><button class="btn icon-btn" id="indicator-open" aria-label="Indicators" title="Indicators"><i data-icon="sliders"></i></button></div></div>
+          <div class="chart-quote"><strong id="quote">—</strong><span id="change" class="sub"></span><span class="sub" id="candle-info"></span></div>
+          <div class="chart-plot"><div class="chart-tools" aria-label="Drawing and zoom tools"><button data-tool="cursor" aria-label="Crosshair" title="Crosshair"><i data-icon="cross"></i></button><button data-tool="line" aria-label="Draw horizontal level" title="Draw horizontal level"><i data-icon="line"></i></button><button data-tool="trend" aria-label="Draw trend line" title="Draw trend line"><i data-icon="trend"></i></button><button data-tool="undo" aria-label="Undo drawing" title="Undo drawing"><i data-icon="undo"></i></button><button data-tool="zoom-in" aria-label="Zoom in" title="Zoom in"><i data-icon="plus"></i></button><button data-tool="zoom-out" aria-label="Zoom out" title="Zoom out"><i data-icon="minus"></i></button></div>
+          <div id="plot-wrap"><canvas id="chart" aria-label="Candlestick chart. Hover to inspect a candle."></canvas><div id="chart-empty" class="chart-empty" hidden></div><div id="ohlc" class="ohlc"></div></div></div>
+          <div class="chart-foot"><div id="chart-legend" class="legend"></div><div id="replay" class="replay"><button class="btn icon-btn" id="replay-play" title="Play replay" aria-label="Play replay"><i data-icon="play"></i></button><button class="btn" id="replay-step"><i data-icon="step"></i>Next candle</button><span id="replay-date"></span></div></div>
+        </section>
+        <aside id="analysis" class="panel analysis" aria-label="Technical analysis"></aside>
+      </div>
+      <section class="panel table-panel" id="terminal-setups"></section>
+    </section>
+    <section id="scanner" class="view" hidden>
+      <div class="heading"><div><div class="eyebrow"><span></span>TRADE RESEARCH</div><h1>Market scanner</h1><p>Compare qualified setups across the forex and crypto watchlist.</p></div><button class="btn primary" id="scan-page"><i data-icon="radar"></i>Run scan</button></div>
+      <section id="scanner-setups" class="panel table-panel"></section>
+    </section>
+    <section id="journal" class="view" hidden>
+      <div class="heading"><div><div class="eyebrow"><span></span>PAPER PROFILE</div><h1>Signal journal</h1><p>Review original levels, strategy versions, and realized paper outcomes.</p></div><button class="btn" id="export"><i data-icon="download"></i>Export CSV</button></div>
+      <div class="notice"><i data-icon="book"></i>Signals are saved in this browser. Demo, CSV, and exchange results are reported separately.</div>
+      <div class="metrics" id="metrics"></div>
+      <section class="panel table-panel"><div class="table-heading"><h2>Signal history</h2><div class="filters"><select id="journal-source" aria-label="Journal data source"><option value="demo">Demo replay</option><option value="live">Coinbase</option><option value="csv">Imported CSV</option></select><select id="journal-market" aria-label="Journal market"><option value="all">All markets</option></select><select id="journal-outcome" aria-label="Signal outcome"><option value="all">All outcomes</option><option>Waiting</option><option>Open</option><option>Target</option><option>Stop</option><option>Expired</option><option>Time exit</option><option>Ambiguous</option><option>Data gap</option></select></div></div><div id="journal-table"></div></section>
+    </section>
+    <section id="lab" class="view" hidden>
+      <div class="heading"><div><div class="eyebrow"><span></span>STRATEGY RESEARCH</div><h1>Strategy lab</h1><p>Compare the current rules with a stricter filter on later candles.</p></div><button id="run-lab" class="btn primary"><i data-icon="layers"></i>Evaluate strategies</button></div>
+      <div class="notice"><i data-icon="layers"></i><span>Research uses 1H setups, 15m fills, and 4H trend context. All results represent paper trades.</span></div>
+      <div id="lab-content"></div>
+    </section>
+    <div class="app-footer"><span>Signal Atlas</span><span>Paper signals · Prices shown in quote currency · Chart times in UTC</span></div>
+  </main>
+</div>
+</div>
+<dialog id="import-dialog"><form id="import-form"><div class="dialog-head"><h2>Import market candles</h2><button type="button" class="btn icon-btn" data-close="import-dialog" aria-label="Close"><i data-icon="x"></i></button></div><p>Upload closed 15-minute candles. Use the columns <code>time,open,high,low,close,volume</code>. Volume is optional. Use UTC ISO timestamps or Unix seconds.</p><label for="import-symbol">Market</label><select id="import-symbol"></select><label for="import-file">Candle file</label><input required type="file" id="import-file" accept=".csv,text/csv"><p id="import-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="btn" data-close="import-dialog">Cancel</button><button class="btn primary" type="submit">Load candles</button></div></form></dialog>
+<dialog id="indicator-dialog"><div class="dialog-head"><h2>Chart indicators</h2><button class="btn icon-btn" data-close="indicator-dialog" aria-label="Close"><i data-icon="x"></i></button></div><p>Choose the overlays and lower studies shown on the chart.</p><div id="indicators" class="indicator-list"></div></dialog>
+<dialog id="signal-dialog"><div class="dialog-head"><h2>Paper signal</h2><button class="btn icon-btn" data-close="signal-dialog" aria-label="Close"><i data-icon="x"></i></button></div><div id="signal-detail"></div></dialog>
+<div id="toast" role="status" class="toast" hidden></div>
+</body>
+</html>
