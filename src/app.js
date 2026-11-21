@@ -56,6 +56,14 @@ let view = 'terminal'
 let timer, toastTimer, autoTimer, scanInProgress
 let labCache
 let lastScanCount = null
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+const dialogOpeners = new WeakMap()
+
+function showDialog(id, opener = document.activeElement) {
+  const dialog = $(id)
+  dialogOpeners.set(dialog, opener)
+  dialog.showModal()
+}
 
 function readState() {
   try {
@@ -282,14 +290,30 @@ function renderChart() {
   $('replay').hidden = mode !== 'demo'
   $('replay-date').textContent = data.bars.length ? dateUTC(data.bars.at(-1).t + M15).slice(5) : ''
   $('replay-step').disabled = (state.replay ?? DEMO.initialBars) >= DEMO_END
-  $('replay-play').disabled = $('replay-step').disabled
+  $('replay-play').disabled = $('replay-step').disabled || reducedMotion.matches
+  if (reducedMotion.matches) $('replay-play').title = 'Auto-play is disabled by your reduced-motion preference'
   document.querySelectorAll('[data-frame]').forEach(el => {
     const on = Number(el.dataset.frame) === frame
     el.classList.toggle('selected', on)
     el.setAttribute('aria-pressed', String(on))
   })
   chart.update({ all, studies: s, levels, signal, frame, shown, drawings: state.drawings?.[chartKey()] ?? [], key: chartKey(), format: n => fmt(m,n) })
+  renderChartTable()
   renderAnalysis(m, data, all, s, levels, signal)
+}
+
+function renderChartTable() {
+  const region = $('chart-data')
+  if (region.hidden) return
+  const m = market()
+  const rows = chart.visibleBars().map(b => `<tr>
+    <th scope="row">${dateUTC(b.t)}</th>
+    ${[b.o, b.h, b.l, b.c].map(value => `<td class="numeric">${fmt(m, value)}</td>`).join('')}
+    <td class="numeric">${b.v ?? '—'}</td></tr>`).join('')
+  const interval = frame === 15 ? '15m' : frame / 60 + 'H'
+  region.innerHTML = `<table><caption>${m.name} · ${interval} visible candles</caption><thead><tr>
+    ${['Time (UTC)', 'Open', 'High', 'Low', 'Close', 'Volume'].map(name => `<th scope="col">${name}</th>`).join('')}
+    </tr></thead><tbody>${rows || '<tr><td colspan="6">No candles in this view</td></tr>'}</tbody></table>`
 }
 
 function renderAnalysis(m, data, all, s, levels, signal) {
@@ -385,7 +409,7 @@ function renderLab() {
   <section class="panel lab-card"><h2>Forward paper comparison</h2><p>${promotion ? 'Outcomes frozen at promotion.' : 'Compares saved baseline signals with the subset the candidate would accept.'}</p>${compareTable(paper)}</section></div>
   <section class="panel lab-card"><h2>Promotion criteria</h2><p>At least ${PROMOTION.historical} priced outcomes per strategy on held-out candles and ${PROMOTION.forward} per strategy in the forward journal. The candidate must be positive after costs, improve average return by at least ${PROMOTION.averageGainR.toFixed(2)}R, and stay at or below baseline drawdown in both windows.</p><dl class="detail-list">${diagnostics.map(([label, value]) => level(label, value)).join('')}</dl></section>`
 }
-function openSignal(id) {
+function openSignal(id, opener) {
   const s = state.journal?.[id]
   if (!s) return
   const m = byMarket[s.symbol]
@@ -394,7 +418,7 @@ function openSignal(id) {
     ${level('Entry trigger', fmt(m,s.entry))}${level('Stop', fmt(m,s.stop), 'down')}${level('Target', fmt(m,s.target), 'up')}
     ${level('Outcome', s.outcome)}${level('Resolved', dateUTC(s.finished))}${level('Paper fill', fmt(m,s.fill))}${level('Exit', fmt(m,s.exitPrice))}${level('Round-trip cost', (s.cost * 100).toFixed(3) + '%')}${level('Net return', s.netR == null ? '—' : signed(s.netR) + 'R')}
     </dl><p>1R equals the original entry-to-stop distance. Once triggered, an open position exits after 24 15m candles if neither level is reached.</p>`
-  $('signal-dialog').showModal()
+  showDialog('signal-dialog', opener)
 }
 function exportJournal() {
   const fields = ['symbol','source','version','strategy','direction','published','setupAt','issued','expires','entry','stop','target','filled','fill','finished','exitPrice','outcome','cost','net','netR']
@@ -506,6 +530,7 @@ document.addEventListener('click', event => {
   }
   if (action.tool) {
     chart.use(action.tool)
+    renderChartTable()
     if (['cursor','line','trend'].includes(action.tool)) {
       document.querySelectorAll('[data-tool]').forEach(el => {
         const applies = action.tool === el.dataset.tool
@@ -516,7 +541,7 @@ document.addEventListener('click', event => {
     }
   }
   if (action.close) $(action.close).close()
-  if (action.signal) openSignal(action.signal)
+  if (action.signal) openSignal(action.signal, btn)
   if (btn.id === 'restore-baseline') {
     const key = [srcFor(market()), symbol].join('|')
     if (state.promoted?.[key]?.version === 'strict') {
@@ -537,6 +562,7 @@ $('export').addEventListener('click', exportJournal)
 $('replay-step').addEventListener('click', () => void step())
 $('replay-play').addEventListener('click', () => {
   if (timer) { stopReplay(); return }
+  if (reducedMotion.matches) return
   $('replay-play').innerHTML = icon('pause')
   $('replay-play').setAttribute('aria-label','Pause replay')
   $('replay-play').title = 'Pause replay'
@@ -545,7 +571,7 @@ $('replay-play').addEventListener('click', () => {
 })
 $('indicator-open').addEventListener('click', () => {
   $('indicators').innerHTML = Object.entries(indicators).map(([id,[label]]) => `<label><input type="checkbox" value="${id}" ${(state.indicators ?? defaultIndicators).includes(id) ? 'checked' : ''}>${label}</label>`).join('')
-  $('indicator-dialog').showModal()
+  showDialog('indicator-dialog')
 })
 $('indicators').addEventListener('change', () => {
   state.indicators = [...$('indicators').querySelectorAll('input:checked')].map(el => el.value)
@@ -556,7 +582,7 @@ $('import-open').addEventListener('click', () => {
   $('import-error').textContent = ''
   $('import-file').value = ''
   $('import-symbol').value = symbol
-  $('import-dialog').showModal()
+  showDialog('import-dialog')
 })
 $('import-form').addEventListener('submit', async event => {
   event.preventDefault()
@@ -585,6 +611,35 @@ window.addEventListener('storage', event => {
   state = { ...saved, mode }
   render()
 })
+$('chart-table-toggle').addEventListener('click', () => {
+  const toggle = $('chart-table-toggle')
+  const region = $('chart-data')
+  region.hidden = !region.hidden
+  toggle.setAttribute('aria-expanded', String(!region.hidden))
+  toggle.textContent = region.hidden ? 'View data table' : 'Hide data table'
+  renderChartTable()
+})
+reducedMotion.addEventListener('change', () => {
+  if (timer && reducedMotion.matches) stopReplay()
+  render()
+})
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('close', () => {
+    const opener = dialogOpeners.get(dialog)
+    if (opener?.isConnected) { opener.focus(); return }
+    const equivalent = [...$(view).querySelectorAll('[data-signal]')].find(button =>
+      button.dataset.signal === opener?.dataset.signal)
+    const fallback = equivalent ?? $('crumb')
+    fallback.focus()
+  })
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Tab') return
+    const controls = [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled)')]
+    const first = controls[0], last = controls.at(-1)
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+  })
+}
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && timer) stopReplay()
   if (!document.hidden && mode === 'live') void sceneScan({ silent: true })

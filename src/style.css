@@ -159,3 +159,9 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .lab-top{margin-top:14px}
 .lab-top .table-heading{padding:0;min-height:35px}
 @media(max-width:620px){.chart-plot .ohlc{font-size:.62rem}.filters{flex-wrap:wrap}}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+#chart:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
+.candle-data{max-height:300px;border-top:1px solid var(--border)}
+.candle-data caption{padding:8px 14px;text-align:left;color:var(--muted)}
+.candle-data tbody th{font:inherit;text-transform:none;letter-spacing:normal}
+@media(prefers-reduced-motion:reduce){button:hover{transition:none}}

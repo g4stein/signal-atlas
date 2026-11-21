@@ -42,7 +42,12 @@ export class CandlestickChart {
       this.draw()
     })
     canvas.addEventListener('pointerleave', () => { this.hover = null; this.draw() })
-    canvas.addEventListener('click', e => this.place(e))
+    canvas.addEventListener('click', e => {
+      const rect = canvas.getBoundingClientRect()
+      this.place(e.clientX - rect.left, e.clientY - rect.top)
+    })
+    canvas.addEventListener('keydown', e => this.onKey(e))
+    canvas.addEventListener('blur', () => { this.hover = null; this.draw() })
   }
 
   update(data) {
@@ -66,10 +71,30 @@ export class CandlestickChart {
     this.draw()
   }
 
-  place(event) {
+  visibleBars() {
+    return this.data?.all.slice(-this.limit) ?? []
+  }
+
+  onKey(event) {
+    const g = this.geom
+    const moves = { ArrowLeft: [-g?.dx, 0], ArrowRight: [g?.dx, 0], ArrowUp: [0, -5], ArrowDown: [0, 5] }
+    const move = moves[event.key]
+    if (!g || (!move && event.key !== 'Enter' && event.key !== ' ')) return
+    event.preventDefault()
+    const current = this.hover ?? { x: (g.bars.length - .5) * g.dx, y: (g.top + g.bottom) / 2 }
+    if (move) {
+      this.hover = {
+        x: Math.min((g.bars.length - .5) * g.dx, Math.max(g.dx / 2, current.x + move[0])),
+        y: Math.min(g.bottom, Math.max(g.top, current.y + move[1])),
+      }
+      this.draw()
+    } else {
+      this.place(current.x, current.y)
+    }
+  }
+
+  place(x, y) {
     if (!this.geom || this.tool === 'cursor') return
-    const rect = this.canvas.getBoundingClientRect()
-    const x = event.clientX - rect.left, y = event.clientY - rect.top
     const g = this.geom
     if (x < 0 || x >= g.right || y < g.top || y > g.bottom) return
     const index = Math.min(g.bars.length - 1, Math.floor(x / g.dx))
@@ -98,7 +123,7 @@ export class CandlestickChart {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
     const { all, studies: s, shown, levels, signal, frame, drawings, format } = data
-    const bars = all.slice(-this.limit)
+    const bars = this.visibleBars()
     if (!bars.length) { this.geom = null; this.options.inspect(null); return }
     const shift = all.length - bars.length
     const allowedPanes = []
