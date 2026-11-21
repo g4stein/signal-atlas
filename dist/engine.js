@@ -1,3 +1,5 @@
+import { readCSVLine } from './csv.js'
+
 export const MINUTE = 60000
 export const M15 = 15 * MINUTE
 const HOUR = 4 * M15
@@ -71,24 +73,46 @@ function validBar(b) {
     && (b.v === null || (finite(b.v) && b.v >= 0))
 }
 
+function parseCandleTime(stamp) {
+  if (/^\d{10}$/.test(stamp)) return Number(stamp) * 1000
+  if (/^\d{13}$/.test(stamp)) return Number(stamp)
+  const parts = /^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d(?::\d\d(?:\.\d+)?)?)(Z|[+-]\d\d:\d\d)?$/i.exec(stamp)
+  if (!parts) return NaN
+  const [, day, time, zone = 'Z'] = parts
+  const reference = new Date(day + 'T00:00:00Z')
+  if (!finite(reference.valueOf()) || reference.toISOString().slice(0, 10) !== day) return NaN
+  return Date.parse(day + 'T' + time + zone)
+}
+
+function candleNumber(cell) {
+  if (!cell?.value) return NaN
+  if (cell.quoted && /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(cell.value)) {
+    return Number(cell.value.replaceAll(',', ''))
+  }
+  return Number(cell.value)
+}
+
 export function parseCSV(input) {
   const rows = input.replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(row => row.trim())
-  const columns = rows[0].split(',').map(col => col.trim().replace(/^"|"$/g, '').toLowerCase())
+  const columns = readCSVLine(rows[0] ?? '', 1).map(cell => cell.value.toLowerCase())
   const fields = ['time', 'open', 'high', 'low', 'close', 'volume']
   const indices = fields.map(name => columns.indexOf(name))
   if (indices.slice(0, 5).includes(-1)) throw Error('Required columns are time, open, high, low, and close.')
   if (rows.length < 33 || rows.length > 16001) throw Error('Upload between 32 and 16,000 candle rows.')
   const candleByTime = new Map()
   for (let i = 1; i < rows.length; i++) {
-    const values = rows[i].split(',').map(item => item.trim().replace(/^"|"$/g, ''))
-    const [stamp, open, high, low, close, volume] = indices.map(index => values[index] ?? '')
-    const time = /^\d{10}$/.test(stamp) ? Number(stamp) * 1000
-      : /^\d{13}$/.test(stamp) ? Number(stamp)
-      : /(?:Z|[+-]\d\d:\d\d)$/i.test(stamp) ? Date.parse(stamp) : NaN
-    const candle = { t: time, o: Number(open), h: Number(high), l: Number(low), c: Number(close), v: volume === '' ? null : Number(volume) }
-    if (!validBar(candle)) throw Error(`Row ${i + 1} needs valid OHLC values and a closed, quarter-hour-aligned UTC timestamp.`)
-    if (candleByTime.has(time)) throw Error(`Row ${i + 1} repeats a candle timestamp.`)
-    candleByTime.set(time, candle)
+    const row = i + 1
+    const values = readCSVLine(rows[i], row)
+    if (values.length > columns.length) throw Error(`Row ${row} has too many fields. Put prices that contain thousands separators in double quotes.`)
+    const [stamp, open, high, low, close, volume] = indices.map(index => values[index])
+    const candle = {
+      t: parseCandleTime(stamp?.value ?? ''),
+      o: candleNumber(open), h: candleNumber(high), l: candleNumber(low), c: candleNumber(close),
+      v: volume?.value ? candleNumber(volume) : null,
+    }
+    if (!validBar(candle)) throw Error(`Row ${row} needs valid OHLC values and a closed, quarter-hour-aligned ISO timestamp or Unix timestamp. Zone-free ISO times are UTC.`)
+    if (candleByTime.has(candle.t)) throw Error(`Row ${row} repeats a candle timestamp.`)
+    candleByTime.set(candle.t, candle)
   }
   return [...candleByTime.values()].sort((a, b) => a.t - b.t)
 }
@@ -108,17 +132,42 @@ export function mergeImports(existing, incoming) {
   return [...combined.values()].sort((a, b) => a.t - b.t).slice(-16000)
 }
 
-export async function fetchCoinbase(market) {
-  const end = Math.floor(Date.now() / M15) * M15
-  const chunks = await Promise.all([0, 1, 2, 3].map(async index => {
-    const until = end - index * 285 * M15
-    const since = until - 285 * M15
-    const query = new URLSearchParams({ granularity: '900', start: new Date(since).toISOString(), end: new Date(until).toISOString() })
-    const response = await fetch(`https://api.exchange.coinbase.com/products/${market.id}/candles?${query}`, { signal: AbortSignal.timeout(11000) })
+let coinbaseRetryAt = 0
+const rateLimited = 'Coinbase rate limit (HTTP 429). The feed will pause before trying again.'
+
+async function fetchCoinbaseChunk(market, since, until) {
+  const query = new URLSearchParams({ granularity: '900', start: new Date(since).toISOString(), end: new Date(until).toISOString() })
+  const ms = 11000
+  const controller = typeof AbortSignal.timeout === 'function' ? null : new AbortController()
+  const timer = controller ? setTimeout(() => controller.abort(), ms) : null
+  try {
+    const signal = controller?.signal ?? AbortSignal.timeout(ms)
+    const response = await fetch(`https://api.exchange.coinbase.com/products/${market.id}/candles?${query}`, { signal })
+    if (response.status === 429) {
+      const raw = response.headers.get('Retry-After')
+      const delay = raw && /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw ?? '') - Date.now()
+      coinbaseRetryAt = Math.max(coinbaseRetryAt, Date.now() + (finite(delay) ? Math.max(60000, delay) : 60000))
+      throw Error(rateLimited)
+    }
     if (!response.ok) throw Error(`Coinbase returned HTTP ${response.status}.`)
     const body = await response.json()
     if (!Array.isArray(body)) throw Error('Unexpected Coinbase response.')
     return body.map(([t,l,h,o,c,v]) => ({ t:t * 1000,l,h,o,c,v })).filter(bar => bar.t >= since && bar.t < until && validBar(bar))
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw Error('Coinbase candle request timed out.')
+    if (error instanceof TypeError) throw Error('Coinbase candle request failed. Check your connection.')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function fetchCoinbase(market) {
+  if (Date.now() < coinbaseRetryAt) throw Error(rateLimited)
+  const end = Math.floor(Date.now() / M15) * M15
+  const chunks = await Promise.all([0, 1, 2, 3].map(index => {
+    const until = end - index * 285 * M15
+    return fetchCoinbaseChunk(market, until - 285 * M15, until)
   }))
   const bars = [...new Map(chunks.flat().map(bar => [bar.t, bar])).values()].sort((a,b) => a.t - b.t)
   if (bars.length < 320) throw Error('Coinbase returned too little candle history.')

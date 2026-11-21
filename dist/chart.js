@@ -14,6 +14,17 @@ export const defaultIndicators = ['ema20', 'ema50', 'signal', 'volume']
 const colors = { grid: '#282a39', dim: '#9699b1', green: '#54cdae', red: '#ed788e', ink: '#e3ddf4', plot: '#171923' }
 const mono = '11px ui-monospace, monospace'
 
+export function plotGeometry(width, height, allowedPanes) {
+  const right = Math.min(width, Math.max(1, width - (width < 400 ? 66 : 83)))
+  const bottomAxis = Math.max(1, height - 23)
+  const top = Math.max(0, Math.min(29, bottomAxis - 1))
+  const panes = [...allowedPanes]
+  const paneHeight = () => panes.length === 3 ? 39 : 49
+  while (panes.length && bottomAxis - top - panes.length * paneHeight() < 48) panes.pop()
+  const paneH = paneHeight()
+  return { right, top, bottomAxis, bottom: bottomAxis - panes.length * paneH, panes, paneH }
+}
+
 export class CandlestickChart {
   constructor(canvas, options) {
     this.canvas = canvas
@@ -78,7 +89,7 @@ export class CandlestickChart {
     if (!data) return
     const dpr = window.devicePixelRatio || 1
     const width = canvas.clientWidth, height = canvas.clientHeight
-    if (!width || !height) return
+    if (!width || !height) { this.geom = null; return }
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr)
       canvas.height = Math.round(height * dpr)
@@ -89,24 +100,22 @@ export class CandlestickChart {
     const bars = all.slice(-this.limit)
     if (!bars.length) { this.geom = null; this.options.inspect(null); return }
     const shift = all.length - bars.length
-    const right = width - (width < 400 ? 66 : 83)
-    const bottomAxis = height - 23
-    const panes = []
-    if (shown.has('volume') && bars.some(b => b.v !== null)) panes.push('volume')
-    if (shown.has('rsi')) panes.push('rsi')
-    if (shown.has('macd')) panes.push('macd')
-    const paneH = panes.length === 3 ? 39 : 49
-    const top = 29, bottom = bottomAxis - panes.length * paneH
+    const allowedPanes = []
+    if (shown.has('volume') && bars.some(b => b.v !== null)) allowedPanes.push('volume')
+    if (shown.has('rsi')) allowedPanes.push('rsi')
+    if (shown.has('macd')) allowedPanes.push('macd')
+    const { right, top, bottom, bottomAxis, panes, paneH } = plotGeometry(width, height, allowedPanes)
     const projected = shown.has('signal') && signal ? [signal.stop, signal.entry, signal.target] : []
     if (shown.has('levels') && levels) projected.push(levels.support, levels.resistance)
-    const high = Math.max(...bars.map(b => b.h), ...projected)
-    const low = Math.min(...bars.map(b => b.l), ...projected)
-    const padding = (high - low || high * .002) * .08
-    const max = high + padding, min = low - padding
+    const overlay = projected.filter(Number.isFinite)
+    const high = Math.max(...bars.map(b => b.h), ...overlay)
+    const low = Math.min(...bars.map(b => b.l), ...overlay)
+    const padding = Math.max(Number.MIN_VALUE, (high - low || high * .002) * .08)
+    const max = Math.min(Number.MAX_VALUE, high + padding), min = Math.max(0, low - padding)
     const dx = right / (bars.length + 3)
     const x = i => (i + .5) * dx
-    const y = price => top + (max - price) * (bottom - top) / (max - min)
-    const price = y => max - (y - top) * (max - min) / (bottom - top)
+    const y = price => top + ((max - price) / (max - min)) * (bottom - top)
+    const price = y => max - ((y - top) / (bottom - top)) * (max - min)
     this.geom = { right, top, bottom, bars, dx, price }
     const line = (x1, y1, x2, y2, color) => {
       ctx.strokeStyle = color

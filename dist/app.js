@@ -1,6 +1,7 @@
 import { MARKETS, M15, MINUTE, versions, demoBars, parseCSV, mergeImports, fetchCoinbase, research, latestSetups, issue, advance, stats, backtest, compare, clearsGate } from './engine.js'
 import { CandlestickChart, indicators, defaultIndicators } from './chart.js'
 import { closedBefore, createResearchCache } from './research-cache.js'
+import { csvCell } from './csv.js'
 
 const icons = {
   chart: '<path d="M3 3v17h18M6 14l4-4 4 2 6-7"/>',
@@ -140,10 +141,10 @@ function dataFor(m, source = srcFor(m)) {
 }
 function available(m, source = srcFor(m)) {
   const bar = barsFor(m, source).at(-1)
-  return bar && (source !== 'live' || Boolean(exchange[m.id]) && !exchangeErrors[m.id] && Date.now() - (bar.t + M15) < 2 * M15)
+  return bar && (source !== 'live' || (Boolean(exchange[m.id]) && !exchangeErrors[m.id] && Date.now() - (bar.t + M15) < 2 * M15))
 }
 function statusFor(m) {
-  if (exchangeErrors[m.id] && srcFor(m) === 'live') return 'Coinbase unavailable'
+  if (exchangeErrors[m.id] && srcFor(m) === 'live') return exchangeErrors[m.id]
   if (!barsFor(m).length) return srcFor(m) === 'csv' ? 'Import 15m candles to analyze this market' : 'Load Coinbase candles with Run scan'
   if (!available(m)) return 'Cached candles · feed stale'
   return ''
@@ -306,7 +307,7 @@ function renderAnalysis(m, data, all, s, levels, signal) {
   const lastLines = signal ? level('Entry trigger', fmt(m, signal.entry)) + level('Stop', fmt(m, signal.stop), 'down') + level('Target', fmt(m, signal.target), 'up')
     : level('Support', fmt(m, levels?.support)) + level('Resistance', fmt(m, levels?.resistance)) + level('ATR 14', atr == null ? '—' : fmt(m, atr))
   $('analysis').innerHTML = `<div class="analysis-top"><h2>${icon('layers')}Technical analysis</h2><span class="pill">${frame === 15 ? '15m' : frame / 60 + 'H'}</span></div><div class="analysis-body">
-  <div class="signal-summary"><div class="signal-title"><strong>${title}</strong>${signal ? directionPill(signal.direction) : ''}</div><p>${desc}</p></div>
+  <div class="signal-summary"><div class="signal-title"><strong>${title}</strong>${signal ? directionPill(signal.direction) : ''}</div><p>${clean(desc)}</p></div>
   <div><h3>Market conditions</h3><dl class="detail-list">${level('4H context', bias, bias === 'Bullish' ? 'up' : bias === 'Bearish' ? 'down' : '')}${level('EMA trend', trend)}${level('RSI 14', rsi == null ? '—' : rsi.toFixed(1))}${level('ATR %', atr != null && current ? (atr / current * 100).toFixed(2) + '%' : '—')}</dl></div>
   <div><h3>${signal ? 'Paper trade levels' : 'Key levels'}</h3><dl class="detail-list">${lastLines}</dl></div>
   </div><div class="analysis-foot">${button}</div>`
@@ -338,7 +339,7 @@ function renderSetups() {
   const list = rows.length ? table(['Market', 'Setup', 'Bias', 'Entry trigger', 'Rule score', 'Held-out avg.'], rows.map(({m, signal: s, evidence}) => `<tr><td><button class="open-row" data-market="${m.id}">${m.name}</button></td><td>${s.id ? `<button class="open-row" data-signal="${clean(s.id)}">${s.strategy}</button>` : s.strategy}</td><td>${directionPill(s.direction)}</td><td class="numeric">${fmt(m, s.entry)}</td><td class="numeric">${s.score} / 100</td><td class="numeric ${changeClass(evidence.avg)}">${evidence.avg == null ? '—' : `${signed(evidence.avg)}R · n=${evidence.count}`}</td></tr>`).join(''))
     : empty('Run a scan or advance the replay to check for new 1H setups.')
   $('terminal-setups').innerHTML = title + list
-  $('scanner-setups').innerHTML = title + list + `<div class="scan-note"><p>Markets with at least 10 resolved trades for the setup rank by average held-out return after estimated costs. Other setups rank by rule score, which measures indicator alignment.</p>${mode === 'live' ? `<p>Coinbase checks: ${MARKETS.filter(m => m.kind === 'Crypto' && srcFor(m) === 'live').map(m => `${m.name} ${statusFor(m) ? '· ' + statusFor(m) : '· available'}`).join(' / ') || 'Using imported crypto data'}. Import forex candles to include those pairs.</p>` : ''}</div>`
+  $('scanner-setups').innerHTML = title + list + `<div class="scan-note"><p>Markets with at least 10 resolved trades for the setup rank by average held-out return after estimated costs. Other setups rank by rule score, which measures indicator alignment.</p>${mode === 'live' ? `<p>Coinbase checks: ${MARKETS.filter(m => m.kind === 'Crypto' && srcFor(m) === 'live').map(m => `${m.name} ${statusFor(m) ? '· ' + clean(statusFor(m)) : '· available'}`).join(' / ') || 'Using imported crypto data'}. Import forex candles to include those pairs.</p>` : ''}</div>`
   hydrate($('terminal-setups')); hydrate($('scanner-setups'))
 }
 function filteredJournal() {
@@ -402,8 +403,8 @@ function exportJournal() {
     const val = s[k]
     if (['published','setupAt','issued','expires','filled','finished'].includes(k) && val != null) return new Date(val).toISOString()
     return val ?? ''
-  }).join(','))
-  const url = URL.createObjectURL(new Blob([[fields.join(','), ...rows].join('\n') + '\n'], { type: 'text/csv' }))
+  }).map(csvCell).join(','))
+  const url = URL.createObjectURL(new Blob([[fields.join(','), ...rows].join('\r\n') + '\r\n'], { type: 'text/csv' }))
   const a = Object.assign(document.createElement('a'), { href: url, download: 'signal-atlas-journal.csv' })
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
